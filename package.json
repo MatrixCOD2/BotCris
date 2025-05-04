@@ -2,9 +2,9 @@
   "name": "discord-questions-bot",
   "version": "1.0.0",
   "description": "Bot de Discord para gestionar preguntas",
-  "main": "index.js",
+  "main": "bot.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node bot.js"
   },
   "author": "Tu Nombre",
   "license": "MIT",
