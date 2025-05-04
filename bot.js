@@ -1,166 +1,205 @@
 require('dotenv').config();
+const { Client, GatewayIntentBits, Partials, Routes, SlashCommandBuilder, ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder } = require('discord.js');
+const { REST } = require('@discordjs/rest');
 const fs = require('fs');
 const path = require('path');
-const { Client, GatewayIntentBits, Routes, SlashCommandBuilder } = require('discord.js');
-const { REST } = require('@discordjs/rest');
 
-// Replace with your own Discord bot token and client ID (application ID) and optionally guild ID for testing
+// Reemplazá con tus datos
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-// For testing, you can specify a GUILD_ID to register commands only in one server (faster update)
-// Otherwise leave empty or null to register globally (may take up to 1 hour to update)
-const GUILD_ID = ''; // e.g. '123456789012345678'
+const CHANNEL_ID = "1364018070397518017";
+const GUILD_ID = ''; // Para pruebas en servidor específico (opcional)
 
-const QUESTIONS_FILE = path.join(__dirname, 'questions.json');
+const formsFilePath = path.resolve('./forms.json');
+let forms = {};
 
-let questions = [];
-if (fs.existsSync(QUESTIONS_FILE)) {
-  try {
-    const data = fs.readFileSync(QUESTIONS_FILE, 'utf8');
-    questions = JSON.parse(data);
-  } catch (error) {
-    console.error('Error loading questions:', error);
-    questions = [];
+// Carga formularios del archivo JSON si existe
+function loadForms() {
+  if (fs.existsSync(formsFilePath)) {
+    try {
+      forms = JSON.parse(fs.readFileSync(formsFilePath, 'utf-8'));
+    } catch {
+      forms = {};
+    }
+  } else {
+    forms = {};
   }
 }
 
-function saveQuestions() {
-  fs.writeFileSync(QUESTIONS_FILE, JSON.stringify(questions, null, 2));
+// Guarda formularios al archivo JSON
+function saveForms() {
+  fs.writeFileSync(formsFilePath, JSON.stringify(forms, null, 2));
 }
 
-// Define commands
+// Cliente Discord
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+  partials: [Partials.Channel],
+});
+
+// Comandos slash
 const commands = [
   new SlashCommandBuilder()
-    .setName('addquestion')
-    .setDescription('Añade una nueva pregunta')
-    .addStringOption(option =>
-      option.setName('texto')
-        .setDescription('Texto de la pregunta')
-        .setRequired(true)
-    ),
-
+    .setName('crearformulario')
+    .setDescription('Crea un formulario interactivo en un canal específico'),
   new SlashCommandBuilder()
-    .setName('editquestion')
-    .setDescription('Edita una pregunta existente')
-    .addIntegerOption(option =>
-      option.setName('id')
-        .setDescription('ID de la pregunta a editar')
+    .setName('mostrar')
+    .setDescription('Muestra un formulario guardado')
+    .addStringOption(option =>
+      option.setName('nombre')
+        .setDescription('Nombre del formulario a mostrar')
         .setRequired(true))
-    .addStringOption(option =>
-      option.setName('texto')
-        .setDescription('Nuevo texto de la pregunta')
-        .setRequired(true)),
-
-  new SlashCommandBuilder()
-    .setName('listquestions')
-    .setDescription('Lista todas las preguntas'),
-
-  new SlashCommandBuilder()
-    .setName('getquestion')
-    .setDescription('Obtiene una pregunta por su ID')
-    .addIntegerOption(option =>
-      option.setName('id')
-        .setDescription('ID de la pregunta')
-        .setRequired(true)),
-
-  new SlashCommandBuilder()
-    .setName('help')
-    .setDescription('Muestra ayuda sobre los comandos del bot')
 ].map(command => command.toJSON());
 
-// Register commands
-const rest = new REST({ version: '10' }).setToken(TOKEN);
-
+// Registro de comandos
 async function registerCommands() {
+  const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
-    console.log('Registrando comandos...');
     if (GUILD_ID) {
-      await rest.put(
-        Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-        { body: commands }
-      );
-      console.log('Comandos registrados en el servidor específico.');
+      console.log('Registrando comandos en guild ' + GUILD_ID);
+      await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
     } else {
-      await rest.put(
-        Routes.applicationCommands(CLIENT_ID),
-        { body: commands }
-      );
-      console.log('Comandos registrados globalmente.');
+      console.log('Registrando comandos globales');
+      await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
     }
+    console.log('Comandos registrados correctamente.');
   } catch (error) {
     console.error(error);
   }
 }
 
-registerCommands();
+// Espera respuesta del usuario
+async function askQuestion(channel, userId, question, time = 300000) {
+  await channel.send(`<@${userId}> ${question}`);
+  try {
+    const filter = m => m.author.id === userId && m.channel.id === channel.id;
+    const collected = await channel.awaitMessages({ filter, max: 1, time, errors: ['time'] });
+    return collected.first().content.trim();
+  } catch {
+    await channel.send(`<@${userId}> Tiempo agotado. Por favor, iniciá de nuevo con /crearformulario.`);
+    return null;
+  }
+}
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+// /crearformulario
+async function handleCrearFormulario(interaction) {
+  const channel = await client.channels.fetch(CHANNEL_ID);
+  const userId = interaction.user.id;
 
-client.on('ready', () => {
-  console.log(`Bot listo! Logueado como ${client.user.tag}`);
-});
+  await interaction.reply({ content: `Hola <@${userId}>, iniciarás la creación del formulario aquí.`, ephemeral: true });
 
+  const formName = await askQuestion(channel, userId, '¿Cuál es el nombre del formulario? (Debe ser único)');
+  if (!formName) return;
+
+  if (forms[formName]) {
+    await channel.send(`<@${userId}> Ya existe un formulario con ese nombre.`);
+    return;
+  }
+
+  const numQuestionsStr = await askQuestion(channel, userId, '¿Cuántas preguntas tendrá el formulario? (Solo números)');
+  if (!numQuestionsStr) return;
+
+  const numQuestions = parseInt(numQuestionsStr, 10);
+  if (isNaN(numQuestions) || numQuestions <= 0) {
+    await channel.send(`<@${userId}> Número inválido. Reiniciá con /crearformulario.`);
+    return;
+  }
+
+  const questions = [];
+  for (let i = 0; i < numQuestions; i++) {
+    const q = await askQuestion(channel, userId, `Escribí la pregunta #${i + 1}:`);
+    if (!q) return;
+    questions.push({ question: q, answer: null });
+  }
+
+  forms[formName] = questions;
+  saveForms();
+
+  await channel.send(`<@${userId}> Formulario "${formName}" creado con éxito. Usá /mostrar para verlo.`);
+}
+
+// /mostrar
+async function handleMostrar(interaction) {
+  const formName = interaction.options.getString('nombre');
+  const channel = await client.channels.fetch(interaction.channelId);
+
+  if (!forms[formName]) {
+    await interaction.reply({ content: `No existe un formulario llamado "${formName}".`, ephemeral: true });
+    return;
+  }
+
+  const questions = forms[formName];
+  if (questions.length === 0) {
+    await interaction.reply({ content: `El formulario "${formName}" no tiene preguntas.`, ephemeral: true });
+    return;
+  }
+
+  const options = questions.map((q, idx) => ({
+    label: `Pregunta ${idx + 1}`,
+    description: q.question.length > 50 ? q.question.slice(0, 47) + '...' : q.question,
+    value: idx.toString(),
+  })).slice(0, 25);
+
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId(`form_select_${formName}`)
+    .setPlaceholder('Seleccioná una pregunta')
+    .addOptions(options);
+
+  const actionRow = new ActionRowBuilder().addComponents(selectMenu);
+
+  await interaction.reply({
+    content: `Formulario: **${formName}**\nSeleccioná una pregunta para ver su respuesta (si está disponible).`,
+    components: [actionRow],
+    ephemeral: false,
+  });
+}
+
+// Eventos
 client.on('interactionCreate', async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-
-  const { commandName } = interaction;
-
-  if (commandName === 'addquestion') {
-    const texto = interaction.options.getString('texto');
-    const newId = questions.length > 0 ? questions[questions.length - 1].id + 1 : 1;
-    questions.push({ id: newId, text: texto });
-    saveQuestions();
-    await interaction.reply(`Pregunta añadida con ID ${newId}.`);
+  if (interaction.isChatInputCommand()) {
+    if (interaction.commandName === 'crearformulario') {
+      await handleCrearFormulario(interaction);
+    } else if (interaction.commandName === 'mostrar') {
+      await handleMostrar(interaction);
+    }
   }
 
-  else if (commandName === 'editquestion') {
-    const id = interaction.options.getInteger('id');
-    const texto = interaction.options.getString('texto');
-    const index = questions.findIndex(q => q.id === id);
-    if (index === -1) {
-      await interaction.reply({ content: `No se encontró una pregunta con ID ${id}.`, ephemeral: true });
+  if (interaction.isStringSelectMenu()) {
+    const customId = interaction.customId;
+    if (!customId.startsWith('form_select_')) return;
+    const formName = customId.replace('form_select_', '');
+    const questions = forms[formName];
+    if (!questions) {
+      await interaction.update({ content: `El formulario "${formName}" no existe.`, components: [], ephemeral: true });
       return;
     }
-    questions[index].text = texto;
-    saveQuestions();
-    await interaction.reply(`Pregunta con ID ${id} actualizada.`);
-  }
 
-  else if (commandName === 'listquestions') {
-    if (questions.length === 0) {
-      await interaction.reply('No hay preguntas almacenadas aún.');
+    const selectedIndex = parseInt(interaction.values[0], 10);
+    if (isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= questions.length) {
+      await interaction.update({ content: 'Selección inválida.', components: [], ephemeral: true });
       return;
     }
-    // paginate if needed, but here we'll just send all if less than 1000 chars.
-    const allQuestions = questions.map(q => `ID ${q.id}: ${q.text}`).join('\n');
-    if (allQuestions.length > 1900) {
-      await interaction.reply('Demasiadas preguntas para mostrar.');
-    } else {
-      await interaction.reply(`**Preguntas:**\n${allQuestions}`);
-    }
-  }
 
-  else if (commandName === 'getquestion') {
-    const id = interaction.options.getInteger('id');
-    const question = questions.find(q => q.id === id);
-    if (!question) {
-      await interaction.reply({ content: `No se encontró una pregunta con ID ${id}.`, ephemeral: true });
-      return;
-    }
-    await interaction.reply(`Pregunta ID ${id}: ${question.text}`);
-  }
+    const question = questions[selectedIndex].question;
+    const answer = questions[selectedIndex].answer || '*No hay respuesta registrada aún*';
 
-  else if (commandName === 'help') {
-    await interaction.reply(
-      '**Comandos del bot de preguntas:**\n' +
-      '/addquestion <texto> - Añade una nueva pregunta\n' +
-      '/editquestion <id> <nuevo texto> - Edita una pregunta existente\n' +
-      '/listquestions - Lista todas las preguntas\n' +
-      '/getquestion <id> - Obtiene una pregunta por su ID\n' +
-      '/help - Muestra este mensaje de ayuda'
-    );
-  }
+    const embed = new EmbedBuilder()
+      .setTitle(`Pregunta #${selectedIndex + 1}`)
+      .setDescription(question)
+      .addFields({ name: 'Respuesta', value: answer })
+      .setColor(0x00AE86);
 
+    const actionRow = new ActionRowBuilder().addComponents(interaction.component);
+
+    await interaction.update({ embeds: [embed], components: [actionRow], ephemeral: false });
+  }
 });
 
+client.once('ready', () => {
+  console.log('Bot listo:', client.user.tag);
+  loadForms();
+});
+
+registerCommands();
 client.login(TOKEN);
+
