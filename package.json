@@ -1,16 +1,12 @@
 {
   "name": "discord-questions-bot",
   "version": "1.0.0",
-  "description": "Bot de Discord para gestionar preguntas",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
   },
-  "author": "Tu Nombre",
-  "license": "MIT",
   "dependencies": {
     "discord.js": "^14.11.0",
-    "@discordjs/rest": "^1.6.0",
-    "fs": "^0.0.1-security"
+    "dotenv": "^16.3.1"
   }
 }
