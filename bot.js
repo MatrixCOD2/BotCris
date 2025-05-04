@@ -5,8 +5,8 @@ const fs = require('fs');
 const path = require('path');
 
 // Reemplazá con tus datos
-const TOKEN = process.env.TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID;
+const TOKEN = "MTM2ODMyNDU3NzUzMjQ0NDY5Mw.Gd_Sch.CpUidpffdZzQn_67StCld7jMwBKQkeqa3X4CR8";
+const CLIENT_ID = "1368324577532444693";
 const CHANNEL_ID = "1364018070397518017";
 const GUILD_ID = ''; // Para pruebas en servidor específico (opcional)
 
